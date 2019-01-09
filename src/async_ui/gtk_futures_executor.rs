@@ -41,8 +41,8 @@ impl GtkEventLoopAsyncExecutor {
     }
 
     fn invoke(&self, id: usize) {
-        let mut spawns = self.backend.spawns.borrow_mut();
-        match spawns.remove(&id) {
+        let opt_spawn = self.backend.spawns.borrow_mut().remove(&id);
+        match opt_spawn {
             None => {
                 eprintln!("Attempted to invoke non-existing spawn {}", id);
             },
@@ -59,7 +59,7 @@ impl GtkEventLoopAsyncExecutor {
                         // Do nothing
                     },
                     Ok(futures::Async::NotReady) => {
-                        spawns.insert(id, spawn);
+                        self.backend.spawns.borrow_mut().insert(id, spawn);
                     },
                     Err(_) => {
                         eprintln!("Spawned future {} returned error", id);
