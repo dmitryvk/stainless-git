@@ -59,14 +59,11 @@ impl MainScreen {
 
         self.window.show_all();
 
-        let result2 = result.clone();
-        let window2 = self.window.clone();
-
-        self.window.connect_delete_event(move |_, _| {
-            result2.notify();
-            window2.destroy();
+        self.window.connect_delete_event(capture!(result, window = self.window; move |_, _| {
+            result.notify();
+            window.destroy();
             Inhibit(false)
-        });
+        }));
 
         {
             self.list_store.insert_with_values(
@@ -76,17 +73,13 @@ impl MainScreen {
             );
         }
 
-        let list_store_1 = self.list_store.clone();
-        let list_store_2 = self.list_store.clone();
-        let cpupool_1 = self.cpu_pool.clone();
-        let cpupool_2 = self.cpu_pool.clone();
-        let window_1 = self.window.clone();
-        let repo_path = self.repo_path.clone();
-        self.executor.spawn(futures::future::lazy(move || {
-            cpupool_1.spawn_fn(move || {
+        self.executor.spawn(futures::future::lazy(capture!(
+            cpu_pool = self.cpu_pool, repo_path = self.repo_path, list_store = self.list_store, window = self.window;
+            move || {
+            cpu_pool.spawn_fn(move || {
                 use std::process::Command;
 
-                std::thread::sleep_ms(1000);
+                std::thread::sleep(std::time::Duration::from_millis(1000));
 
                 let mut cmd = Command::new("git");
                 cmd
@@ -96,8 +89,7 @@ impl MainScreen {
                 let msg = format!("Running {:?} at {:?}", cmd, repo_path);
 
                 futures::future::ok::<_, ()>((cmd, msg))
-            }).and_then(move |(cmd, msg)| {
-                let list_store = list_store_1;
+            }).and_then(capture!(list_store, cpu_pool; move |(cmd, msg)| {
                 list_store.clear();
                 list_store.insert_with_values(
                     None,
@@ -105,7 +97,7 @@ impl MainScreen {
                     &[&msg]
                 );
 
-                cpupool_2.spawn_fn(move || {
+                cpu_pool.spawn_fn(move || {
                     let mut cmd = cmd;
                     let cmd_output = cmd
                         .output()
@@ -118,11 +110,10 @@ impl MainScreen {
 
                     futures::future::ok::<_, ()>((cmd, cmd_output))
                 })
-            }).and_then(move |(cmd, cmd_output)| {
+            })).and_then(capture!(list_store, window; move |(cmd, cmd_output)| {
                 match cmd_output {
                     Ok(cmd_output) => {
                         let output_str = String::from_utf8_lossy(&cmd_output.stdout).into_owned();
-                        let list_store = list_store_2;
                         list_store.clear();
                         for line in output_str.lines() {
                             list_store.insert_with_values(
@@ -134,7 +125,7 @@ impl MainScreen {
                     },
                     Err(msg) => {
                         use gtk::{ButtonsType, DialogFlags, MessageType, MessageDialog};
-                        let dialog = MessageDialog::new(Some(&window_1),
+                        let dialog = MessageDialog::new(Some(&window),
                             DialogFlags::empty() | DialogFlags::MODAL,
                             MessageType::Error,
                             ButtonsType::Ok,
@@ -142,7 +133,6 @@ impl MainScreen {
                         );
                         dialog.run();
                         dialog.destroy();
-                        let list_store = list_store_2;
                         list_store.clear();
                         list_store.insert_with_values(
                             None,
@@ -153,8 +143,8 @@ impl MainScreen {
                 }
 
                 futures::future::ok::<_, ()>(())
-            })
-        }));
+            }))
+        })));
 
         result
     }

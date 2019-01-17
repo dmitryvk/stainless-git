@@ -1,3 +1,4 @@
+
 use gtk::prelude::*;
 use futures::prelude::*;
 
@@ -7,7 +8,9 @@ use crate::async_ui::event_future::EventFuture;
 use crate::async_ui::gtk_futures_executor::GtkEventLoopAsyncExecutor;
 
 pub struct IntroScreen {
+    #[allow(dead_code)]
     executor: GtkEventLoopAsyncExecutor,
+    #[allow(dead_code)]
     cpu_pool: CpuPool,
     window: gtk::Window,
 }
@@ -33,15 +36,12 @@ impl IntroScreen {
 
         self.window.show_all();
 
-        let result2 = result.clone();
-        let window2 = self.window.clone();
-
-        self.window.connect_delete_event(move |_, _| {
-            result2.notify();
-            window2.destroy();
+        self.window.connect_delete_event(capture!(result, window = self.window; move |_, _| {
+            result.notify();
+            window.destroy();
 
             Inhibit(false)
-        });
+        }));
 
         result
     }

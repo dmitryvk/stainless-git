@@ -1,7 +1,6 @@
 type BoxedFuture = Box<futures::future::Future<Item=(), Error=()>>;
 
 struct GtkEventLoopAsyncExecutorBackend {
-    main_thread_id: std::thread::ThreadId,
     next_id: std::sync::atomic::AtomicUsize,
     spawns: std::cell::RefCell<std::collections::HashMap<usize, futures::executor::Spawn<BoxedFuture>>>,
 }
@@ -20,7 +19,6 @@ impl GtkEventLoopAsyncExecutor {
         GtkEventLoopAsyncExecutor {
             backend: std::sync::Arc::new(
                 GtkEventLoopAsyncExecutorBackend {
-                    main_thread_id: std::thread::current().id(),
                     next_id: std::sync::atomic::AtomicUsize::new(0),
                     spawns: std::cell::RefCell::new(std::collections::HashMap::new())
                 }

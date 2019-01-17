@@ -3,10 +3,10 @@ extern crate gtk;
 extern crate futures;
 extern crate futures_cpupool;
 
-mod screens;
+#[macro_use]
 mod async_ui;
+mod screens;
 
-use gtk::prelude::*;
 use futures::prelude::*;
 use futures_cpupool::CpuPool;
 
@@ -25,24 +25,18 @@ fn main() -> Result<(), String> {
 
     let gtk_executor = GtkEventLoopAsyncExecutor::new();
 
-    let cpupool = CpuPool::new_num_cpus();
+    let cpu_pool = CpuPool::new_num_cpus();
 
-    // let result = screen.show();
-
-    let gtk_executor_2 = gtk_executor.clone();
-    let cpu_pool_2 = cpupool.clone();
-    let gtk_executor_3 = gtk_executor.clone();
-    let cpu_pool_3 = cpupool.clone();
-    gtk_executor.spawn(futures::future::lazy(|| {
+    gtk_executor.spawn(capture!(gtk_executor, cpu_pool; futures::future::lazy(move || {
 
         println!("Showing intro");
-        let screen = IntroScreen::new(gtk_executor_2, cpu_pool_2);
+        let screen = IntroScreen::new(gtk_executor.clone(), cpu_pool.clone());
 
         let result = screen.show()
-        .and_then(|_| {
+        .and_then(capture!(gtk_executor, cpu_pool; |_| {
             println!("Intro screen closed");
             
-            let main_screen = MainScreen::new(gtk_executor_3, cpu_pool_3, repo_path);
+            let main_screen = MainScreen::new(gtk_executor, cpu_pool, repo_path);
 
             main_screen.show()
             .and_then(|_| {
@@ -50,10 +44,10 @@ fn main() -> Result<(), String> {
                 gtk::main_quit();
                 futures::future::ok(())
             })
-        });
+        }));
 
         result
-    }));
+    })));
 
     gtk::main();
 
