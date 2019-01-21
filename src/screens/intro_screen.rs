@@ -4,7 +4,7 @@ use futures::prelude::*;
 
 use futures_cpupool::CpuPool;
 
-use crate::async_ui::event_future::EventFuture;
+use crate::async_ui::promise::PromiseFuture;
 use crate::async_ui::gtk_futures_executor::GtkEventLoopAsyncExecutor;
 
 pub struct IntroScreen {
@@ -30,14 +30,14 @@ impl IntroScreen {
         }
     }
 
-    pub fn show(&self) -> impl Future<Item=(), Error=()> {
-        println!("Showing screen");
-        let result = EventFuture::new();
+    pub fn show_and_pick_repo(&self) -> impl Future<Item=std::ffi::OsString, Error=String> {
+        println!("Showing intro (repository picker) screen");
+        let result = PromiseFuture::new();
 
         self.window.show_all();
 
         self.window.connect_delete_event(capture!(result, window = self.window; move |_, _| {
-            result.notify();
+            result.reject("Not implemented".to_string());
             window.destroy();
 
             Inhibit(false)
