@@ -11,13 +11,13 @@ pub struct MainScreen {
     cpu_pool: CpuPool,
     window: gtk::Window,
 
-    repo_path: std::ffi::OsString,
+    repo_path: std::path::PathBuf,
 
     list_store: gtk::ListStore,
 }
 
 impl MainScreen {
-    pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool, repo_path: std::ffi::OsString) -> MainScreen {
+    pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool, repo_path: std::path::PathBuf) -> MainScreen {
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_title(&repo_path.to_string_lossy());
 

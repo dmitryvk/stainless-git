@@ -46,8 +46,8 @@ fn main_flow(cpu_pool: CpuPool, gtk_executor: GtkEventLoopAsyncExecutor) -> Box<
 
     let args = std::env::args_os().collect::<Vec<_>>();
 
-    let repo_path_fut: Box<Future<Item=std::ffi::OsString, Error=String>> = match args.get(1) {
-        Some(x) => Box::new(futures::future::ok(x.clone())),
+    let repo_path_fut: Box<Future<Item=std::path::PathBuf, Error=String>> = match args.get(1) {
+        Some(x) => Box::new(futures::future::ok(std::path::PathBuf::from(x))),
         None => {
             let intro_screen = IntroScreen::new(gtk_executor.clone(), cpu_pool.clone());
             Box::new(intro_screen.show_and_pick_repo())

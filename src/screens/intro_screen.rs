@@ -12,25 +12,42 @@ pub struct IntroScreen {
     executor: GtkEventLoopAsyncExecutor,
     #[allow(dead_code)]
     cpu_pool: CpuPool,
+
     window: gtk::Window,
+    file_chooser_button: gtk::FileChooserButton,
+    ok_button: gtk::Button,
 }
 
 impl IntroScreen {
     pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool) -> IntroScreen {
 
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
-        window.set_title("Привет, мир!");
+        let vbox = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let file_chooser_button = gtk::FileChooserButton::new(
+            "Please pick Git repository to browse",
+            gtk::FileChooserAction::SelectFolder
+        );
+        let ok_button = gtk::Button::new_with_label("OK");
+
+        window.set_title("Stainless Git");
         window.set_default_size(300, 300);
         window.set_position(gtk::WindowPosition::Center);
+
+        window.add(&vbox);
+
+        vbox.add(&file_chooser_button);
+        vbox.add(&ok_button);
 
         IntroScreen {
             executor: executor,
             cpu_pool: cpu_pool,
-            window: window
+            window: window,
+            file_chooser_button: file_chooser_button,
+            ok_button: ok_button,
         }
     }
 
-    pub fn show_and_pick_repo(&self) -> impl Future<Item=std::ffi::OsString, Error=String> {
+    pub fn show_and_pick_repo(&self) -> impl Future<Item=std::path::PathBuf, Error=String> {
         println!("Showing intro (repository picker) screen");
         let result = PromiseFuture::new();
 
@@ -41,6 +58,18 @@ impl IntroScreen {
             window.destroy();
 
             Inhibit(false)
+        }));
+
+        self.ok_button.connect_clicked(capture!(result, file_chooser_button = self.file_chooser_button, window = self.window; move |_| {
+            match file_chooser_button.get_current_folder() {
+                Some(path) => {
+                    result.resolve(path);
+                    window.destroy();
+                },
+                None => {
+                    println!("Wait! Please pick a directory!");
+                }
+            }
         }));
 
         result
