@@ -22,7 +22,8 @@ impl IntroScreen {
     pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool) -> IntroScreen {
 
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
-        let vbox = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let label = gtk::Label::new("Please pick Git repository to browse");
+        let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let file_chooser_button = gtk::FileChooserButton::new(
             "Please pick Git repository to browse",
             gtk::FileChooserAction::SelectFolder
@@ -35,6 +36,7 @@ impl IntroScreen {
 
         window.add(&vbox);
 
+        vbox.add(&label);
         vbox.add(&file_chooser_button);
         vbox.add(&ok_button);
 
