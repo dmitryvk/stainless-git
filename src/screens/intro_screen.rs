@@ -1,4 +1,3 @@
-
 use gtk::prelude::*;
 use futures::prelude::*;
 
@@ -6,6 +5,8 @@ use futures_cpupool::CpuPool;
 
 use crate::async_ui::promise::PromiseFuture;
 use crate::async_ui::gtk_futures_executor::GtkEventLoopAsyncExecutor;
+
+use std::path::PathBuf;
 
 pub struct IntroScreen {
     #[allow(dead_code)]
@@ -49,7 +50,7 @@ impl IntroScreen {
         }
     }
 
-    pub fn show_and_pick_repo(&self) -> impl Future<Item=std::path::PathBuf, Error=String> {
+    pub fn show_and_pick_repo(&self) -> impl Future<Item=PathBuf, Error=String> {
         println!("Showing intro (repository picker) screen");
         let result = PromiseFuture::new();
 

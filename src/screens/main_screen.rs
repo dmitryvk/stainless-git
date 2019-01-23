@@ -1,10 +1,13 @@
 use gtk::prelude::*;
 use futures::prelude::*;
+use futures::future;
 
 use futures_cpupool::CpuPool;
 
 use crate::async_ui::event_future::EventFuture;
 use crate::async_ui::gtk_futures_executor::GtkEventLoopAsyncExecutor;
+
+use std::path::PathBuf;
 
 pub struct MainScreen {
     executor: GtkEventLoopAsyncExecutor,
@@ -17,7 +20,7 @@ pub struct MainScreen {
 }
 
 impl MainScreen {
-    pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool, repo_path: std::path::PathBuf) -> MainScreen {
+    pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool, repo_path: PathBuf) -> MainScreen {
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_title(&repo_path.to_string_lossy());
 
@@ -73,7 +76,7 @@ impl MainScreen {
             );
         }
 
-        self.executor.spawn(futures::future::lazy(capture!(
+        self.executor.spawn(future::lazy(capture!(
             cpu_pool = self.cpu_pool, repo_path = self.repo_path, list_store = self.list_store, window = self.window;
             move || {
             cpu_pool.spawn_fn(move || {
@@ -88,7 +91,7 @@ impl MainScreen {
 
                 let msg = format!("Running {:?} at {:?}", cmd, repo_path);
 
-                futures::future::ok::<_, ()>((cmd, msg))
+                future::ok::<_, ()>((cmd, msg))
             }).and_then(capture!(list_store, cpu_pool; move |(cmd, msg)| {
                 list_store.clear();
                 list_store.insert_with_values(
@@ -108,7 +111,7 @@ impl MainScreen {
                         _ => cmd_output
                     };
 
-                    futures::future::ok::<_, ()>((cmd, cmd_output))
+                    future::ok::<_, ()>((cmd, cmd_output))
                 })
             })).and_then(capture!(list_store, window; move |(cmd, cmd_output)| {
                 match cmd_output {
@@ -142,7 +145,7 @@ impl MainScreen {
                     }
                 }
 
-                futures::future::ok::<_, ()>(())
+                future::ok::<_, ()>(())
             }))
         })));
 
