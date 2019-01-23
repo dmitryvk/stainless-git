@@ -24,7 +24,11 @@ impl MainScreen {
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_title(&repo_path.to_string_lossy());
 
-        let list_store = gtk::ListStore::new(&[gtk::Type::String]);
+        let list_store = gtk::ListStore::new(&[
+            gtk::Type::String,
+            gtk::Type::String,
+            gtk::Type::String
+        ]);
 
         let tree_view = gtk::TreeView::new();
 
@@ -34,13 +38,41 @@ impl MainScreen {
 
         tree_view.set_model(&list_store);
 
-        let cell_renderer = gtk::CellRendererText::new();
-        let column = gtk::TreeViewColumn::new();
-        column.set_title("Commit message");
-        column.pack_start(&cell_renderer, true);
-        column.add_attribute(&cell_renderer, "text", 0);
+        {
+            let cell_renderer = gtk::CellRendererText::new();
+            let column = gtk::TreeViewColumn::new();
+            column.set_title("Summary");
+            column.set_resizable(true);
+            column.set_expand(false);
+            column.pack_start(&cell_renderer, true);
+            column.add_attribute(&cell_renderer, "text", 0);
 
-        tree_view.append_column(&column);
+            tree_view.append_column(&column);
+        }
+
+        {
+            let cell_renderer = gtk::CellRendererText::new();
+            let column = gtk::TreeViewColumn::new();
+            column.set_title("Time");
+            column.set_resizable(true);
+            column.set_expand(false);
+            column.pack_start(&cell_renderer, true);
+            column.add_attribute(&cell_renderer, "text", 1);
+
+            tree_view.append_column(&column);
+        }
+
+        {
+            let cell_renderer = gtk::CellRendererText::new();
+            let column = gtk::TreeViewColumn::new();
+            column.set_title("Author");
+            column.set_resizable(true);
+            column.set_expand(false);
+            column.pack_start(&cell_renderer, true);
+            column.add_attribute(&cell_renderer, "text", 2);
+
+            tree_view.append_column(&column);
+        }
 
         window.add(&scrolled_window);
 
@@ -57,6 +89,7 @@ impl MainScreen {
     }
 
     pub fn show(&self) -> impl Future<Item=(), Error=()> {
+        use std::result::Result::{Err, Ok};
         println!("Showing main screen");
         let result = EventFuture::new();
 
@@ -71,58 +104,69 @@ impl MainScreen {
         {
             self.list_store.insert_with_values(
                 None,
-                &[0],
-                &[&"Loading..."]
+                &[0, 1, 2],
+                &[&"Loading...", &"", &""]
             );
         }
 
         self.executor.spawn(future::lazy(capture!(
             cpu_pool = self.cpu_pool, repo_path = self.repo_path, list_store = self.list_store, window = self.window;
             move || {
-            cpu_pool.spawn_fn(move || {
-                use std::process::Command;
+            cpu_pool.spawn_fn(move || -> Box<Future<Item=_, Error=String>+Send> {
+                use git2::Repository;
+                let repo = match Repository::discover(repo_path) {
+                    Ok(repo) => repo,
+                    Err(error) => return Box::new(future::err(format!("Error opening repository: {}", error))),
+                };
 
-                std::thread::sleep(std::time::Duration::from_millis(1000));
+                let mut revwalk = match repo.revwalk() {
+                    Ok(revwalk) => revwalk,
+                    Err(error) => return Box::new(future::err(format!("Error loading commit graph: {}", error))),
+                };
 
-                let mut cmd = Command::new("git");
-                cmd
-                    .current_dir(&repo_path)
-                    .args(&["log", "--oneline"]);
+                revwalk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL/* | git2::Sort::REVERSE*/);
 
-                let msg = format!("Running {:?} at {:?}", cmd, repo_path);
+                if let Err(e) = revwalk.push_head() {
+                    return Box::new(future::err(format!("Error initializing commit graph walk: {}", e)));
+                }
 
-                future::ok::<_, ()>((cmd, msg))
-            }).and_then(capture!(list_store, cpu_pool; move |(cmd, msg)| {
-                list_store.clear();
-                list_store.insert_with_values(
-                    None,
-                    &[0],
-                    &[&msg]
-                );
+                let commit_ids = match revwalk.collect::<Result<Vec<git2::Oid>, _>>() {
+                    Ok(commits) => commits,
+                    Err(error) => return Box::new(future::err(format!("Error iterating over commits: {}", error))),
+                };
 
-                cpu_pool.spawn_fn(move || {
-                    let mut cmd = cmd;
-                    let cmd_output = cmd
-                        .output()
-                        .map_err(|e| e.to_string());
+                let commits = commit_ids.into_iter().map(|commit_id| repo.find_commit(commit_id));
 
-                    let cmd_output = match cmd_output {
-                        Ok(ref x) if !x.status.success() => Err(String::from_utf8_lossy(&x.stderr).into_owned()),
-                        _ => cmd_output
-                    };
+                let commits = match commits.collect::<Result<Vec<git2::Commit>, _>>() {
+                    Ok(commits) => commits,
+                    Err(e) => return Box::new(future::err(format!("Error reading commit: {}", e))),
+                };
 
-                    future::ok::<_, ()>((cmd, cmd_output))
-                })
-            })).and_then(capture!(list_store, window; move |(cmd, cmd_output)| {
-                match cmd_output {
-                    Ok(cmd_output) => {
-                        let output_str = String::from_utf8_lossy(&cmd_output.stdout).into_owned();
+                let commit_infos = commits.into_iter().map(|commit| {
+                    let summary = commit.summary().unwrap_or("?").to_string();
+                    let timestamp = std::time::UNIX_EPOCH
+                        + std::time::Duration::from_secs(commit.author().when().seconds() as u64);
+                    let author = commit.author().name().unwrap_or("?").to_string();
+                    let email = commit.author().email().unwrap_or("?").to_string();
+
+                    (summary, timestamp, author, email)
+                }).collect::<Vec<_>>();
+
+                Box::new(future::ok(commit_infos))
+            }).then(capture!(list_store, window; move |commits_result| {
+                match commits_result {
+                    Ok(commits) => {
                         list_store.clear();
-                        for line in output_str.lines() {
+                        for (summary, timestamp, author, email) in commits {
                             list_store.insert_with_values(
                                 None,
-                                &[0],
-                                &[&line]
+                                &[0, 1, 2],
+                                &[
+                                    // TODO: Better ellipsize
+                                    &summary.chars().take(100).collect::<String>(),
+                                    &format!("{:?}", timestamp),
+                                    &format!("{} <{}>", author, email)
+                                ]
                             );
                         }
                     },
@@ -140,7 +184,7 @@ impl MainScreen {
                         list_store.insert_with_values(
                             None,
                             &[0],
-                            &[&format!("Error executing {:?}:\n{}", cmd, msg)]
+                            &[&format!("{}", msg)]
                         );
                     }
                 }
