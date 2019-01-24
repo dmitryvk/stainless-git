@@ -40,10 +40,11 @@ impl MainScreen {
 
         {
             let cell_renderer = gtk::CellRendererText::new();
+            cell_renderer.set_property_ellipsize(pango::EllipsizeMode::End);
             let column = gtk::TreeViewColumn::new();
             column.set_title("Summary");
             column.set_resizable(true);
-            column.set_expand(false);
+            column.set_expand(true);
             column.pack_start(&cell_renderer, true);
             column.add_attribute(&cell_renderer, "text", 0);
 
@@ -64,10 +65,11 @@ impl MainScreen {
 
         {
             let cell_renderer = gtk::CellRendererText::new();
+            cell_renderer.set_property_ellipsize(pango::EllipsizeMode::End);
             let column = gtk::TreeViewColumn::new();
             column.set_title("Author");
             column.set_resizable(true);
-            column.set_expand(false);
+            column.set_expand(true);
             column.pack_start(&cell_renderer, true);
             column.add_attribute(&cell_renderer, "text", 2);
 
@@ -143,11 +145,11 @@ impl MainScreen {
                 };
 
                 let commit_infos = commits.into_iter().map(|commit| {
-                    let summary = commit.summary().unwrap_or("?").to_string();
+                    let summary = String::from_utf8_lossy(commit.summary_bytes().unwrap_or(&[])).to_string();
                     let timestamp = std::time::UNIX_EPOCH
                         + std::time::Duration::from_secs(commit.author().when().seconds() as u64);
-                    let author = commit.author().name().unwrap_or("?").to_string();
-                    let email = commit.author().email().unwrap_or("?").to_string();
+                    let author = String::from_utf8_lossy(commit.author().name_bytes()).to_string();
+                    let email = String::from_utf8_lossy(commit.author().email_bytes()).to_string();
 
                     (summary, timestamp, author, email)
                 }).collect::<Vec<_>>();
@@ -162,8 +164,7 @@ impl MainScreen {
                                 None,
                                 &[0, 1, 2],
                                 &[
-                                    // TODO: Better ellipsize
-                                    &summary.chars().take(100).collect::<String>(),
+                                    &summary,
                                     &format!("{:?}", timestamp),
                                     &format!("{} <{}>", author, email)
                                 ]
