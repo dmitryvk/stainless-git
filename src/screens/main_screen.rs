@@ -146,8 +146,10 @@ impl MainScreen {
 
                 let commit_infos = commits.into_iter().map(|commit| {
                     let summary = String::from_utf8_lossy(commit.summary_bytes().unwrap_or(&[])).to_string();
-                    let timestamp = std::time::UNIX_EPOCH
-                        + std::time::Duration::from_secs(commit.author().when().seconds() as u64);
+                    use chrono::TimeZone;
+                    let timestamp =
+                        chrono::Utc.timestamp(commit.author().when().seconds(), 0)
+                        .with_timezone(&chrono::FixedOffset::east(commit.author().when().offset_minutes() * 60));
                     let author = String::from_utf8_lossy(commit.author().name_bytes()).to_string();
                     let email = String::from_utf8_lossy(commit.author().email_bytes()).to_string();
 
@@ -165,7 +167,7 @@ impl MainScreen {
                                 &[0, 1, 2],
                                 &[
                                     &summary,
-                                    &format!("{:?}", timestamp),
+                                    &timestamp.format("%Y-%m-%d %H:%M:%S %:z").to_string(),
                                     &format!("{} <{}>", author, email)
                                 ]
                             );
