@@ -4,25 +4,27 @@ use futures::future;
 
 use futures_cpupool::CpuPool;
 
-use crate::async_ui::event_future::EventFuture;
+use crate::async_ui::promise::PromiseFuture;
 use crate::async_ui::gtk_futures_executor::GtkEventLoopAsyncExecutor;
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 pub struct MainScreen {
     executor: GtkEventLoopAsyncExecutor,
     cpu_pool: CpuPool,
     window: gtk::Window,
-
-    repo_path: std::path::PathBuf,
+    repo: Arc<Mutex<git2::Repository>>,
 
     list_store: gtk::ListStore,
 
     commit_info_view: gtk::TextView,
+    
 }
 
 impl MainScreen {
-    pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool, repo_path: PathBuf) -> MainScreen {
+    pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool, repo_path: PathBuf) -> impl Future<Item=MainScreen, Error=String> {
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_title(&repo_path.to_string_lossy());
 
@@ -100,20 +102,33 @@ impl MainScreen {
             commit_info_view.get_buffer().unwrap().set_text(&msg);
         }));
 
-        MainScreen {
-            executor,
-            cpu_pool,
-            window,
-            repo_path,
-            list_store,
-            commit_info_view,
-        }
+        cpu_pool.spawn_fn(capture!(repo_path; move || -> Box<Future<Item=_, Error=String>+Send> {
+            use git2::Repository;
+            let repo = match Repository::discover(repo_path) {
+                Ok(repo) => repo,
+                Err(error) => return Box::new(future::err(format!("Error opening repository: {}", error))),
+            };
+
+            Box::new(future::ok(repo))
+        })).
+        and_then(move |repo| {
+            future::ok(
+                MainScreen {
+                    executor,
+                    cpu_pool,
+                    window,
+                    list_store,
+                    commit_info_view,
+                    repo: Arc::new(Mutex::new(repo)),
+                }
+            )
+        })
     }
 
-    pub fn show(&self) -> impl Future<Item=(), Error=()> {
+    pub fn show(&self) -> impl Future<Item=(), Error=String> {
         use std::result::Result::{Err, Ok};
         println!("Showing main screen");
-        let result = EventFuture::new();
+        let result = PromiseFuture::new();
 
         self.window.set_default_size(600, 800);
         self.window.set_position(gtk::WindowPosition::Center);
@@ -123,7 +138,7 @@ impl MainScreen {
         self.window.maximize();
 
         self.window.connect_delete_event(capture!(result, window = self.window; move |_, _| {
-            result.notify();
+            result.resolve(());
             window.destroy();
             Inhibit(false)
         }));
@@ -137,14 +152,10 @@ impl MainScreen {
         }
 
         self.executor.spawn(future::lazy(capture!(
-            cpu_pool = self.cpu_pool, repo_path = self.repo_path, list_store = self.list_store, window = self.window;
+            cpu_pool = self.cpu_pool, repo = self.repo, list_store = self.list_store, window = self.window;
             move || {
             cpu_pool.spawn_fn(move || -> Box<Future<Item=_, Error=String>+Send> {
-                use git2::Repository;
-                let repo = match Repository::discover(repo_path) {
-                    Ok(repo) => repo,
-                    Err(error) => return Box::new(future::err(format!("Error opening repository: {}", error))),
-                };
+                let repo = repo.lock().unwrap();
 
                 let mut revwalk = match repo.revwalk() {
                     Ok(revwalk) => revwalk,
@@ -217,7 +228,7 @@ impl MainScreen {
                     }
                 }
 
-                future::ok::<_, ()>(())
+                future::ok::<_, _>(())
             }))
         })));
 

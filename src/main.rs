@@ -7,6 +7,7 @@ use futures::future;
 use futures_cpupool::CpuPool;
 
 use async_ui::gtk_futures_executor::GtkEventLoopAsyncExecutor;
+use gtk::prelude::*;
 
 fn main() -> Result<(), String> {
     use std::rc::Rc;
@@ -61,10 +62,29 @@ fn main_flow(cpu_pool: CpuPool, gtk_executor: GtkEventLoopAsyncExecutor) -> Box<
             println!("Loading git repository {}", repo_path.to_string_lossy());
             println!("Intro screen closed");
             
-            let main_screen = MainScreen::new(gtk_executor, cpu_pool, repo_path);
+            MainScreen::new(gtk_executor, cpu_pool, repo_path)
+            .and_then(|main_screen| {
+                main_screen.show()
+            })
+            .or_else(|e| {
+                use async_ui::promise::PromiseFuture;
+                let promise = PromiseFuture::new();
+                let dialog = gtk::MessageDialog::new::<gtk::Window>(
+                    Option::None,
+                    gtk::DialogFlags::MODAL,
+                    gtk::MessageType::Error,
+                    gtk::ButtonsType::Close,
+                    &format!("Error showing main screen: {}", e)
+                );
+                dialog.connect_response(capture!(promise, dialog; move |_, _| {
+                    dialog.destroy();
+                    promise.reject(e.clone());
+                }));
 
-            main_screen.show()
-            .map_err(|_| "Error showing main screen".to_string())
+                dialog.show();
+
+                promise
+            })
             .and_then(|_| {
                 println!("Main screen closed");
                 future::ok(())
