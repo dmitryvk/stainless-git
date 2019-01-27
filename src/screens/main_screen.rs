@@ -17,6 +17,8 @@ pub struct MainScreen {
     repo_path: std::path::PathBuf,
 
     list_store: gtk::ListStore,
+
+    commit_info_view: gtk::TextView,
 }
 
 impl MainScreen {
@@ -29,6 +31,10 @@ impl MainScreen {
             gtk::Type::String,
             gtk::Type::String
         ]);
+
+        let vpane = gtk::Paned::new(gtk::Orientation::Vertical);
+
+        window.add(&vpane);
 
         let tree_view = gtk::TreeView::new();
 
@@ -76,10 +82,23 @@ impl MainScreen {
             tree_view.append_column(&column);
         }
 
-        window.add(&scrolled_window);
+        vpane.pack1(&scrolled_window, true, false);
 
-        window.set_default_size(300, 300);
-        window.set_position(gtk::WindowPosition::Center);
+        let commit_info_view = gtk::TextView::new();
+
+        let scrolled_window_2 = gtk::ScrolledWindow::new(None, None);
+
+        vpane.pack2(&scrolled_window_2, true, false);
+        scrolled_window_2.add(&commit_info_view);
+
+        tree_view.get_selection().connect_changed(capture!(commit_info_view; move |selection| {
+            let msg = match selection.get_selected() {
+                None => "".to_owned(),
+                Some((model, iter)) => model.get_value(&iter, 0).get::<String>().unwrap(),
+            };
+
+            commit_info_view.get_buffer().unwrap().set_text(&msg);
+        }));
 
         MainScreen {
             executor: executor,
@@ -87,6 +106,7 @@ impl MainScreen {
             window: window,
             repo_path: repo_path,
             list_store: list_store,
+            commit_info_view: commit_info_view,
         }
     }
 
@@ -95,7 +115,12 @@ impl MainScreen {
         println!("Showing main screen");
         let result = EventFuture::new();
 
+        self.window.set_default_size(600, 800);
+        self.window.set_position(gtk::WindowPosition::Center);
+
         self.window.show_all();
+
+        self.window.maximize();
 
         self.window.connect_delete_event(capture!(result, window = self.window; move |_, _| {
             result.notify();
