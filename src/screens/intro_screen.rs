@@ -42,11 +42,11 @@ impl IntroScreen {
         vbox.add(&ok_button);
 
         IntroScreen {
-            executor: executor,
-            cpu_pool: cpu_pool,
-            window: window,
-            file_chooser_button: file_chooser_button,
-            ok_button: ok_button,
+            executor,
+            cpu_pool,
+            window,
+            file_chooser_button,
+            ok_button,
         }
     }
 

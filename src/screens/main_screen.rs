@@ -101,12 +101,12 @@ impl MainScreen {
         }));
 
         MainScreen {
-            executor: executor,
-            cpu_pool: cpu_pool,
-            window: window,
-            repo_path: repo_path,
-            list_store: list_store,
-            commit_info_view: commit_info_view,
+            executor,
+            cpu_pool,
+            window,
+            repo_path,
+            list_store,
+            commit_info_view,
         }
     }
 
@@ -212,7 +212,7 @@ impl MainScreen {
                         list_store.insert_with_values(
                             None,
                             &[0],
-                            &[&format!("{}", msg)]
+                            &[&msg.to_string()]
                         );
                     }
                 }
