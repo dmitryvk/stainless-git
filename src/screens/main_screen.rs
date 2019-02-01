@@ -29,9 +29,10 @@ impl MainScreen {
         window.set_title(&repo_path.to_string_lossy());
 
         let list_store = gtk::ListStore::new(&[
-            gtk::Type::String,
-            gtk::Type::String,
-            gtk::Type::String
+            gtk::Type::String, // Commit ID as string
+            gtk::Type::String, // Commit message
+            gtk::Type::String, // Commit date as string
+            gtk::Type::String // Commit author email
         ]);
 
         let vpane = gtk::Paned::new(gtk::Orientation::Vertical);
@@ -54,7 +55,7 @@ impl MainScreen {
             column.set_resizable(true);
             column.set_expand(true);
             column.pack_start(&cell_renderer, true);
-            column.add_attribute(&cell_renderer, "text", 0);
+            column.add_attribute(&cell_renderer, "text", 1);
 
             tree_view.append_column(&column);
         }
@@ -66,7 +67,7 @@ impl MainScreen {
             column.set_resizable(true);
             column.set_expand(false);
             column.pack_start(&cell_renderer, true);
-            column.add_attribute(&cell_renderer, "text", 1);
+            column.add_attribute(&cell_renderer, "text", 2);
 
             tree_view.append_column(&column);
         }
@@ -79,7 +80,7 @@ impl MainScreen {
             column.set_resizable(true);
             column.set_expand(true);
             column.pack_start(&cell_renderer, true);
-            column.add_attribute(&cell_renderer, "text", 2);
+            column.add_attribute(&cell_renderer, "text", 3);
 
             tree_view.append_column(&column);
         }
@@ -93,15 +94,6 @@ impl MainScreen {
         vpane.pack2(&scrolled_window_2, true, false);
         scrolled_window_2.add(&commit_info_view);
 
-        tree_view.get_selection().connect_changed(capture!(commit_info_view; move |selection| {
-            let msg = match selection.get_selected() {
-                None => "".to_owned(),
-                Some((model, iter)) => model.get_value(&iter, 0).get::<String>().unwrap(),
-            };
-
-            commit_info_view.get_buffer().unwrap().set_text(&msg);
-        }));
-
         cpu_pool.spawn_fn(capture!(repo_path; move || -> Box<Future<Item=_, Error=String>+Send> {
             use git2::Repository;
             let repo = match Repository::discover(repo_path) {
@@ -109,9 +101,55 @@ impl MainScreen {
                 Err(error) => return Box::new(future::err(format!("Error opening repository: {}", error))),
             };
 
+            Box::new(future::ok(Arc::new(Mutex::new(repo))))
+        }))
+        .and_then(capture!(commit_info_view, cpu_pool, executor; move |repo| {
+            tree_view.get_selection().connect_changed(capture!(commit_info_view, repo; move |selection| {
+                let msg = match selection.get_selected() {
+                    None => "".to_owned(),
+                    Some((model, iter)) => {
+                        let oid_str = model.get_value(&iter, 0).get::<String>().unwrap();
+                        executor.spawn(
+                            cpu_pool
+                            .spawn_fn(capture!(repo; move || -> Result<_, String> {
+                                let oid = git2::Oid::from_str(&oid_str).or_else(|e| Err(format!("{}", e)))?;
+                                let repo = repo.lock().unwrap();
+                                let commit = repo.find_commit(oid).or_else(|e| Err(format!("{}", e)))?;
+
+                                let message = String::from_utf8_lossy(
+                                    commit.message_bytes()
+                                ).to_string();
+
+                                let parents_count = commit.parent_count();
+
+                                let result = format!("{}\n\nParents count: {}", message, parents_count);
+
+                                Ok(result)
+                            }))
+                            .then(capture!(commit_info_view; move |result| {
+                                match result {
+                                    Ok(message) => {
+                                        commit_info_view.get_buffer().unwrap().set_text(&message);
+                                    },
+                                    Err(e) => {
+                                        commit_info_view.get_buffer().unwrap().set_text(&e);
+                                    }
+                                }
+
+                                Ok(())
+                            }))
+                        );
+                        
+                        "Loading".to_owned()
+                    },
+                };
+
+                commit_info_view.get_buffer().unwrap().set_text(&msg);
+            }));
+
             Box::new(future::ok(repo))
-        })).
-        and_then(move |repo| {
+        }))
+        .and_then(move |repo| {
             future::ok(
                 MainScreen {
                     executor,
@@ -119,7 +157,7 @@ impl MainScreen {
                     window,
                     list_store,
                     commit_info_view,
-                    repo: Arc::new(Mutex::new(repo)),
+                    repo: repo,
                 }
             )
         })
@@ -146,8 +184,8 @@ impl MainScreen {
         {
             self.list_store.insert_with_values(
                 None,
-                &[0, 1, 2],
-                &[&"Loading...", &"", &""]
+                &[0, 1, 2, 3],
+                &[&"", &"Loading...", &"", &""]
             );
         }
 
@@ -181,6 +219,7 @@ impl MainScreen {
                 };
 
                 let commit_infos = commits.into_iter().map(|commit| {
+                    let commit_id = format!("{}", commit.id());
                     let summary = String::from_utf8_lossy(commit.summary_bytes().unwrap_or(&[])).to_string();
                     use chrono::TimeZone;
                     let timestamp =
@@ -189,7 +228,7 @@ impl MainScreen {
                     let author = String::from_utf8_lossy(commit.author().name_bytes()).to_string();
                     let email = String::from_utf8_lossy(commit.author().email_bytes()).to_string();
 
-                    (summary, timestamp, author, email)
+                    (commit_id, summary, timestamp, author, email)
                 }).collect::<Vec<_>>();
 
                 Box::new(future::ok(commit_infos))
@@ -197,11 +236,12 @@ impl MainScreen {
                 match commits_result {
                     Ok(commits) => {
                         list_store.clear();
-                        for (summary, timestamp, author, email) in commits {
+                        for (commit_id, summary, timestamp, author, email) in commits {
                             list_store.insert_with_values(
                                 None,
-                                &[0, 1, 2],
+                                &[0, 1, 2, 3],
                                 &[
+                                    &commit_id,
                                     &summary,
                                     &timestamp.format("%Y-%m-%d %H:%M:%S %:z").to_string(),
                                     &format!("{} <{}>", author, email)

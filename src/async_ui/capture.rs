@@ -1,6 +1,6 @@
 macro_rules! capture_single_var {
     ($name:ident) => {
-        let $name = $name.clone();
+        let $name = Clone::clone(&$name);
     };
     ($name:ident = $init:expr) => {
         let $name = $init.clone();
