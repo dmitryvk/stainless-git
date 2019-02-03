@@ -20,7 +20,6 @@ pub struct MainScreenUi {
     commits_tree_view: gtk::TreeView,
 
     diff_items_list_store: gtk::ListStore,
-    diff_items_tree_view: gtk::TreeView,
 
     commit_info_view: gtk::TextView,
 }
@@ -37,7 +36,7 @@ pub struct MainScreen {
 }
 
 impl MainScreen {
-    pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool, repo_path: PathBuf) -> impl Future<Item=Rc<MainScreen>, Error=String> {
+    pub fn create(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool, repo_path: PathBuf) -> impl Future<Item=Rc<MainScreen>, Error=String> {
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_title(&repo_path.to_string_lossy());
 
@@ -173,7 +172,6 @@ impl MainScreen {
                     commits_tree_view,
                     commit_info_view,
                     diff_items_list_store: diff_items_list_store,
-                    diff_items_tree_view,
                 },
             };
 
@@ -191,7 +189,7 @@ impl MainScreen {
                 Some((model, iter)) => {
                     let oid_str = model.get_value(&iter, 0).get::<String>().unwrap();
                     let oid = git2::Oid::from_str(&oid_str).unwrap();
-                    main_screen.backend.requested_commit.lock().unwrap().replace(oid.clone());
+                    main_screen.backend.requested_commit.lock().unwrap().replace(oid);
                     main_screen.ui.executor.spawn(
                         main_screen.backend.cpu_pool
                         .spawn_fn(capture!(backend = main_screen.backend; move || -> Result<Option<_>, String> {
@@ -273,7 +271,7 @@ impl MainScreen {
                                                 match (delta.new_file().path_bytes(), delta.old_file().path_bytes()) {
                                                     (Some(bytes), _) => bytes,
                                                     (None, Some(bytes)) => bytes,
-                                                    (None, None) => "(none)".as_bytes(),
+                                                    (None, None) => b"(none)",
                                                 }
                                             ).to_string();
                                         changes.push((
@@ -296,7 +294,7 @@ impl MainScreen {
                                             match (delta.new_file().path_bytes(), delta.old_file().path_bytes()) {
                                                 (Some(bytes), _) => bytes,
                                                 (None, Some(bytes)) => bytes,
-                                                (None, None) => "(none)".as_bytes(),
+                                                (None, None) => b"(none)",
                                             }
                                         ).to_string();
                                     changes.push((

@@ -62,7 +62,7 @@ fn main_flow(cpu_pool: CpuPool, gtk_executor: GtkEventLoopAsyncExecutor) -> Box<
             println!("Loading git repository {}", repo_path.to_string_lossy());
             println!("Intro screen closed");
             
-            MainScreen::new(gtk_executor, cpu_pool, repo_path)
+            MainScreen::create(gtk_executor, cpu_pool, repo_path)
             .and_then(|main_screen| {
                 main_screen.show()
             })
