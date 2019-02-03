@@ -10,21 +10,33 @@ use crate::async_ui::gtk_futures_executor::GtkEventLoopAsyncExecutor;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::rc::Rc;
 
-pub struct MainScreen {
+pub struct MainScreenUi {
     executor: GtkEventLoopAsyncExecutor,
-    cpu_pool: CpuPool,
     window: gtk::Window,
-    repo: Arc<Mutex<git2::Repository>>,
 
     commits_list_store: gtk::ListStore,
+    commits_tree_view: gtk::TreeView,
+
+    diff_items_list_store: gtk::ListStore,
+    diff_items_tree_view: gtk::TreeView,
 
     commit_info_view: gtk::TextView,
-    
+}
+
+pub struct MainScreenBackend {
+    cpu_pool: CpuPool,
+    repo: Mutex<git2::Repository>,
+}
+
+pub struct MainScreen {
+    backend: Arc<MainScreenBackend>,
+    ui: MainScreenUi,
 }
 
 impl MainScreen {
-    pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool, repo_path: PathBuf) -> impl Future<Item=MainScreen, Error=String> {
+    pub fn new(executor: GtkEventLoopAsyncExecutor, cpu_pool: CpuPool, repo_path: PathBuf) -> impl Future<Item=Rc<MainScreen>, Error=String> {
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_title(&repo_path.to_string_lossy());
 
@@ -35,17 +47,24 @@ impl MainScreen {
             gtk::Type::String // Commit author email
         ]);
 
+        let diff_items_list_store = gtk::ListStore::new(&[
+            gtk::Type::String, // Parent OID; empty if this a "grouping" item
+            gtk::Type::String, // File path
+            gtk::Type::U8, // Change type, 0: none, 1: delete, 2: add, 3: rename, 0: update
+            gtk::Type::String, // Renamed from path; empty if not renamed
+        ]);
+
         let vpane = gtk::Paned::new(gtk::Orientation::Vertical);
 
         window.add(&vpane);
 
-        let tree_view = gtk::TreeView::new();
+        let commits_tree_view = gtk::TreeView::new();
 
         let scrolled_window = gtk::ScrolledWindow::new(None, None);
 
-        scrolled_window.add(&tree_view);
+        scrolled_window.add(&commits_tree_view);
 
-        tree_view.set_model(&commits_list_store);
+        commits_tree_view.set_model(&commits_list_store);
 
         {
             let cell_renderer = gtk::CellRendererText::new();
@@ -57,7 +76,7 @@ impl MainScreen {
             column.pack_start(&cell_renderer, true);
             column.add_attribute(&cell_renderer, "text", 1);
 
-            tree_view.append_column(&column);
+            commits_tree_view.append_column(&column);
         }
 
         {
@@ -69,7 +88,7 @@ impl MainScreen {
             column.pack_start(&cell_renderer, true);
             column.add_attribute(&cell_renderer, "text", 2);
 
-            tree_view.append_column(&column);
+            commits_tree_view.append_column(&column);
         }
 
         {
@@ -82,85 +101,233 @@ impl MainScreen {
             column.pack_start(&cell_renderer, true);
             column.add_attribute(&cell_renderer, "text", 3);
 
-            tree_view.append_column(&column);
+            commits_tree_view.append_column(&column);
         }
 
         vpane.pack1(&scrolled_window, true, false);
 
         let commit_info_view = gtk::TextView::new();
+        commit_info_view.set_editable(false);
 
         let scrolled_window_2 = gtk::ScrolledWindow::new(None, None);
 
         vpane.pack2(&scrolled_window_2, true, false);
-        scrolled_window_2.add(&commit_info_view);
+        let commit_info_vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        commit_info_vbox.pack_start(&commit_info_view, false, false, 0);
+        scrolled_window_2.add(&commit_info_vbox);
 
-        cpu_pool.spawn_fn(capture!(repo_path; move || -> Box<Future<Item=_, Error=String>+Send> {
+        let diff_items_tree_view = gtk::TreeView::new();
+        commit_info_vbox.add(&diff_items_tree_view);
+
+        diff_items_tree_view.set_model(&diff_items_list_store);
+
+        {
+            let column = gtk::TreeViewColumn::new();
+            column.set_title("Change");
+            column.set_resizable(true);
+            column.set_expand(true);
+
+            let cell_renderer_change_type = gtk::CellRendererText::new();
+            cell_renderer_change_type.set_property_ellipsize(pango::EllipsizeMode::End);
+            column.pack_start(&cell_renderer_change_type, false);
+            column.add_attribute(&cell_renderer_change_type, "text", 2); /* 2: change type */
+            
+            let cell_renderer_path = gtk::CellRendererText::new();
+            cell_renderer_path.set_property_ellipsize(pango::EllipsizeMode::End);
+            column.pack_start(&cell_renderer_path, true);
+            column.add_attribute(&cell_renderer_path, "text", 1); /* 1: file path */
+
+            diff_items_tree_view.append_column(&column);
+        }
+
+        cpu_pool.spawn_fn(capture!(repo_path; move || {
             use git2::Repository;
             let repo = match Repository::discover(repo_path) {
                 Ok(repo) => repo,
                 Err(error) => return Box::new(future::err(format!("Error opening repository: {}", error))),
             };
 
-            Box::new(future::ok(Arc::new(Mutex::new(repo))))
-        }))
-        .and_then(capture!(commit_info_view, cpu_pool, executor; move |repo| {
-            tree_view.get_selection().connect_changed(capture!(commit_info_view, repo; move |selection| {
-                let msg = match selection.get_selected() {
-                    None => "".to_owned(),
-                    Some((model, iter)) => {
-                        let oid_str = model.get_value(&iter, 0).get::<String>().unwrap();
-                        executor.spawn(
-                            cpu_pool
-                            .spawn_fn(capture!(repo; move || -> Result<_, String> {
-                                let oid = git2::Oid::from_str(&oid_str).or_else(|e| Err(format!("{}", e)))?;
-                                let repo = repo.lock().unwrap();
-                                let commit = repo.find_commit(oid).or_else(|e| Err(format!("{}", e)))?;
-
-                                let message = String::from_utf8_lossy(
-                                    commit.message_bytes()
-                                ).to_string();
-
-                                let parents_count = commit.parent_count();
-
-                                let result = format!("{}\n\nParents count: {}", message, parents_count);
-
-                                Ok(result)
-                            }))
-                            .then(capture!(commit_info_view; move |result| {
-                                match result {
-                                    Ok(message) => {
-                                        commit_info_view.get_buffer().unwrap().set_text(&message);
-                                    },
-                                    Err(e) => {
-                                        commit_info_view.get_buffer().unwrap().set_text(&e);
-                                    }
-                                }
-
-                                Ok(())
-                            }))
-                        );
-                        
-                        "Loading".to_owned()
-                    },
-                };
-
-                commit_info_view.get_buffer().unwrap().set_text(&msg);
-            }));
-
             Box::new(future::ok(repo))
         }))
-        .and_then(move |repo| {
-            future::ok(
-                MainScreen {
-                    executor,
+        .and_then(capture!(commits_list_store, commit_info_view, cpu_pool, executor; move |repo| {
+
+            let main_screen = MainScreen {
+                backend: Arc::new(MainScreenBackend {
                     cpu_pool,
+                    repo: Mutex::new(repo),
+                }),
+                ui: MainScreenUi {
+                    executor,
                     window,
                     commits_list_store,
+                    commits_tree_view,
                     commit_info_view,
-                    repo: repo,
-                }
-            )
-        })
+                    diff_items_list_store: diff_items_list_store,
+                    diff_items_tree_view,
+                },
+            };
+
+            let main_screen = Rc::new(main_screen);
+
+            Self::subscribe(main_screen.clone());
+            Box::new(future::ok(main_screen))
+        }))
+    }
+
+    fn subscribe(main_screen: Rc<Self>) {
+        main_screen.ui.commits_tree_view.get_selection().connect_changed(capture!(main_screen; move |selection| {
+            let msg = match selection.get_selected() {
+                None => "".to_owned(),
+                Some((model, iter)) => {
+                    let oid_str = model.get_value(&iter, 0).get::<String>().unwrap();
+                    main_screen.ui.executor.spawn(
+                        main_screen.backend.cpu_pool
+                        .spawn_fn(capture!(backend = main_screen.backend; move || -> Result<_, String> {
+                            let oid = git2::Oid::from_str(&oid_str).or_else(|e| Err(format!("{}", e)))?;
+                            let repo = backend.repo.lock().unwrap();
+                            let commit = repo.find_commit(oid).or_else(|e| Err(format!("{}", e)))?;
+
+                            let message = String::from_utf8_lossy(
+                                commit.message_bytes()
+                            ).to_string();
+
+                            let parents_count = commit.parent_count();
+
+                            let mut commit_summary = String::new();
+
+                            use std::fmt::Write;
+                            use chrono::TimeZone;
+
+                            write!(&mut commit_summary, "Commit {}\n", commit.id()).unwrap();
+                            for parent in commit.parents() {
+                                write!(&mut commit_summary, "Parent {}\n", parent.id()).unwrap();
+                            }
+                            let author_timestamp =
+                                chrono::Utc.timestamp(commit.author().when().seconds(), 0)
+                                .with_timezone(&chrono::FixedOffset::east(commit.author().when().offset_minutes() * 60));
+                            let author_name = String::from_utf8_lossy(commit.author().name_bytes()).to_string();
+                            let author_email = String::from_utf8_lossy(commit.author().email_bytes()).to_string();
+                            let committer_timestamp =
+                                chrono::Utc.timestamp(commit.committer().when().seconds(), 0)
+                                .with_timezone(&chrono::FixedOffset::east(commit.committer().when().offset_minutes() * 60));
+                            let committer_name = String::from_utf8_lossy(commit.committer().name_bytes()).to_string();
+                            let committer_email = String::from_utf8_lossy(commit.committer().email_bytes()).to_string();
+
+                            write!(
+                                &mut commit_summary,
+                                "Timestamp {}\nAuthor {} <{}>\n",
+                                author_timestamp.format("%Y-%m-%d %H:%M:%S %:z"),
+                                author_name,
+                                author_email
+                            ).unwrap();
+
+                            if author_timestamp != committer_timestamp || author_name != committer_name || author_email != committer_email {
+                                write!(
+                                    &mut commit_summary,
+                                    "Commit timestamp {}\nCommitter {} <{}>\n",
+                                    committer_timestamp.format("%Y-%m-%d %H:%M:%S %:z"),
+                                    committer_name,
+                                    committer_email
+                                ).unwrap();
+                            }
+
+                            write!(&mut commit_summary, "\n{}", message).unwrap();
+
+                            let mut changes = Vec::new();
+
+                            if parents_count > 0 {
+                                for parent in commit.parents() {
+
+                                    if parents_count > 1 {
+                                        changes.push((
+                                            "".to_string(),
+                                            format!("Changes from {}", parent.id()),
+                                            0,
+                                            "".to_string()
+                                        ));
+                                    }
+
+                                    let diff = repo.diff_tree_to_tree(
+                                        Some(&parent.tree().or_else(|e| Err(format!("{}", e)))?),
+                                        Some(&commit.tree().or_else(|e| Err(format!("{}", e)))?),
+                                        None
+                                    ).or_else(|e| Err(format!("{}", e)))?;
+
+                                    for delta in diff.deltas() {
+                                        let path = String::from_utf8_lossy(
+                                                match (delta.new_file().path_bytes(), delta.old_file().path_bytes()) {
+                                                    (Some(bytes), _) => bytes,
+                                                    (None, Some(bytes)) => bytes,
+                                                    (None, None) => "(none)".as_bytes(),
+                                                }
+                                            ).to_string();
+                                        changes.push((
+                                            "".to_string(), // TODO
+                                            path,
+                                            0, // TODO
+                                            "".to_string() // TODO
+                                        ));
+                                    }
+                                }
+                            } else {
+                                let diff = repo.diff_tree_to_tree(
+                                    None,
+                                    Some(&commit.tree().or_else(|e| Err(format!("{}", e)))?),
+                                    None
+                                ).or_else(|e| Err(format!("{}", e)))?;
+
+                                for delta in diff.deltas() {
+                                    let path = String::from_utf8_lossy(
+                                            match (delta.new_file().path_bytes(), delta.old_file().path_bytes()) {
+                                                (Some(bytes), _) => bytes,
+                                                (None, Some(bytes)) => bytes,
+                                                (None, None) => "(none)".as_bytes(),
+                                            }
+                                        ).to_string();
+                                    changes.push((
+                                        "".to_string(), // TODO
+                                        path,
+                                        0, // TODO
+                                        "".to_string() // TODO
+                                    ));
+                                }
+                            }
+
+                            Ok((commit_summary, changes))
+                        }))
+                        .then(capture!(main_screen; move |result| {
+                            match result {
+                                Ok((summary_text, changes)) => {
+                                    main_screen.ui.commit_info_view.get_buffer().unwrap().set_text(&summary_text);
+                                    main_screen.ui.diff_items_list_store.clear();
+                                    for (commit_id, path, change_type, old_path) in changes {
+                                        main_screen.ui.diff_items_list_store.insert_with_values(
+                                            None,
+                                            &[0, 1, 2, 3],
+                                            &[
+                                                &commit_id,
+                                                &path,
+                                                &change_type,
+                                                &old_path
+                                            ]
+                                        );
+                                    }
+                                },
+                                Err(e) => {
+                                    main_screen.ui.commit_info_view.get_buffer().unwrap().set_text(&e);
+                                }
+                            }
+
+                            Ok(())
+                        }))
+                    );
+                    
+                    "Loading".to_owned()
+                },
+            };
+
+            main_screen.ui.commit_info_view.get_buffer().unwrap().set_text(&msg);
+        }));
     }
 
     pub fn show(&self) -> impl Future<Item=(), Error=String> {
@@ -168,32 +335,32 @@ impl MainScreen {
         println!("Showing main screen");
         let result = PromiseFuture::new();
 
-        self.window.set_default_size(600, 800);
-        self.window.set_position(gtk::WindowPosition::Center);
+        self.ui.window.set_default_size(600, 800);
+        self.ui.window.set_position(gtk::WindowPosition::Center);
 
-        self.window.show_all();
+        self.ui.window.show_all();
 
-        self.window.maximize();
+        self.ui.window.maximize();
 
-        self.window.connect_delete_event(capture!(result, window = self.window; move |_, _| {
+        self.ui.window.connect_delete_event(capture!(result, window = self.ui.window; move |_, _| {
             result.resolve(());
             window.destroy();
             Inhibit(false)
         }));
 
         {
-            self.commits_list_store.insert_with_values(
+            self.ui.commits_list_store.insert_with_values(
                 None,
                 &[0, 1, 2, 3],
                 &[&"", &"Loading...", &"", &""]
             );
         }
 
-        self.executor.spawn(future::lazy(capture!(
-            cpu_pool = self.cpu_pool, repo = self.repo, commits_list_store = self.commits_list_store, window = self.window;
+        self.ui.executor.spawn(future::lazy(capture!(
+            backend = self.backend, commits_list_store = self.ui.commits_list_store, window = self.ui.window;
             move || {
-            cpu_pool.spawn_fn(move || -> Box<Future<Item=_, Error=String>+Send> {
-                let repo = repo.lock().unwrap();
+            backend.cpu_pool.spawn_fn(capture!(backend; move || -> Box<Future<Item=_, Error=String>+Send> {
+                let repo = backend.repo.lock().unwrap();
 
                 let mut revwalk = match repo.revwalk() {
                     Ok(revwalk) => revwalk,
@@ -232,7 +399,7 @@ impl MainScreen {
                 }).collect::<Vec<_>>();
 
                 Box::new(future::ok(commit_infos))
-            }).then(capture!(commits_list_store, window; move |commits_result| {
+            })).then(capture!(commits_list_store, window; move |commits_result| {
                 match commits_result {
                     Ok(commits) => {
                         commits_list_store.clear();

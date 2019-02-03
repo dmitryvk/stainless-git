@@ -3,7 +3,7 @@ macro_rules! capture_single_var {
         let $name = Clone::clone(&$name);
     };
     ($name:ident = $init:expr) => {
-        let $name = $init.clone();
+        let $name = Clone::clone(&$init);
     };
 }
 
