@@ -113,9 +113,17 @@ impl MainScreen {
         let scrolled_window_2 = gtk::ScrolledWindow::new(None, None);
 
         vpane.pack2(&scrolled_window_2, true, false);
+
+        let commit_info_viewport = gtk::Viewport::new(
+            None,
+            None
+        );
+
+        scrolled_window_2.add(&commit_info_viewport);
+
         let commit_info_vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
         commit_info_vbox.pack_start(&commit_info_view, false, false, 0);
-        scrolled_window_2.add(&commit_info_vbox);
+        commit_info_viewport.add(&commit_info_vbox);
 
         let diff_items_tree_view = gtk::TreeView::new();
         commit_info_vbox.add(&diff_items_tree_view);
