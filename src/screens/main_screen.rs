@@ -28,6 +28,7 @@ pub struct MainScreenUi {
 pub struct MainScreenBackend {
     cpu_pool: CpuPool,
     repo: Mutex<git2::Repository>,
+    requested_commit: Mutex<Option<git2::Oid>>,
 }
 
 pub struct MainScreen {
@@ -155,6 +156,7 @@ impl MainScreen {
                 backend: Arc::new(MainScreenBackend {
                     cpu_pool,
                     repo: Mutex::new(repo),
+                    requested_commit: Mutex::new(None),
                 }),
                 ui: MainScreenUi {
                     executor,
@@ -180,10 +182,15 @@ impl MainScreen {
                 None => "".to_owned(),
                 Some((model, iter)) => {
                     let oid_str = model.get_value(&iter, 0).get::<String>().unwrap();
+                    let oid = git2::Oid::from_str(&oid_str).unwrap();
+                    main_screen.backend.requested_commit.lock().unwrap().replace(oid.clone());
                     main_screen.ui.executor.spawn(
                         main_screen.backend.cpu_pool
-                        .spawn_fn(capture!(backend = main_screen.backend; move || -> Result<_, String> {
-                            let oid = git2::Oid::from_str(&oid_str).or_else(|e| Err(format!("{}", e)))?;
+                        .spawn_fn(capture!(backend = main_screen.backend; move || -> Result<Option<_>, String> {
+                            if Some(oid) != *backend.requested_commit.lock().unwrap() {
+                                return Ok(None);
+                            }
+
                             let repo = backend.repo.lock().unwrap();
                             let commit = repo.find_commit(oid).or_else(|e| Err(format!("{}", e)))?;
 
@@ -293,11 +300,11 @@ impl MainScreen {
                                 }
                             }
 
-                            Ok((commit_summary, changes))
+                            Ok(Some((commit_summary, changes)))
                         }))
                         .then(capture!(main_screen; move |result| {
                             match result {
-                                Ok((summary_text, changes)) => {
+                                Ok(Some((summary_text, changes))) => {
                                     main_screen.ui.commit_info_view.get_buffer().unwrap().set_text(&summary_text);
                                     main_screen.ui.diff_items_list_store.clear();
                                     for (commit_id, path, change_type, old_path) in changes {
@@ -312,6 +319,9 @@ impl MainScreen {
                                             ]
                                         );
                                     }
+                                },
+                                Ok(None) => {
+                                    // Do nothing
                                 },
                                 Err(e) => {
                                     main_screen.ui.commit_info_view.get_buffer().unwrap().set_text(&e);
