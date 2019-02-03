@@ -17,7 +17,7 @@ pub struct MainScreen {
     window: gtk::Window,
     repo: Arc<Mutex<git2::Repository>>,
 
-    list_store: gtk::ListStore,
+    commits_list_store: gtk::ListStore,
 
     commit_info_view: gtk::TextView,
     
@@ -28,7 +28,7 @@ impl MainScreen {
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_title(&repo_path.to_string_lossy());
 
-        let list_store = gtk::ListStore::new(&[
+        let commits_list_store = gtk::ListStore::new(&[
             gtk::Type::String, // Commit ID as string
             gtk::Type::String, // Commit message
             gtk::Type::String, // Commit date as string
@@ -45,7 +45,7 @@ impl MainScreen {
 
         scrolled_window.add(&tree_view);
 
-        tree_view.set_model(&list_store);
+        tree_view.set_model(&commits_list_store);
 
         {
             let cell_renderer = gtk::CellRendererText::new();
@@ -155,7 +155,7 @@ impl MainScreen {
                     executor,
                     cpu_pool,
                     window,
-                    list_store,
+                    commits_list_store,
                     commit_info_view,
                     repo: repo,
                 }
@@ -182,7 +182,7 @@ impl MainScreen {
         }));
 
         {
-            self.list_store.insert_with_values(
+            self.commits_list_store.insert_with_values(
                 None,
                 &[0, 1, 2, 3],
                 &[&"", &"Loading...", &"", &""]
@@ -190,7 +190,7 @@ impl MainScreen {
         }
 
         self.executor.spawn(future::lazy(capture!(
-            cpu_pool = self.cpu_pool, repo = self.repo, list_store = self.list_store, window = self.window;
+            cpu_pool = self.cpu_pool, repo = self.repo, commits_list_store = self.commits_list_store, window = self.window;
             move || {
             cpu_pool.spawn_fn(move || -> Box<Future<Item=_, Error=String>+Send> {
                 let repo = repo.lock().unwrap();
@@ -232,12 +232,12 @@ impl MainScreen {
                 }).collect::<Vec<_>>();
 
                 Box::new(future::ok(commit_infos))
-            }).then(capture!(list_store, window; move |commits_result| {
+            }).then(capture!(commits_list_store, window; move |commits_result| {
                 match commits_result {
                     Ok(commits) => {
-                        list_store.clear();
+                        commits_list_store.clear();
                         for (commit_id, summary, timestamp, author, email) in commits {
-                            list_store.insert_with_values(
+                            commits_list_store.insert_with_values(
                                 None,
                                 &[0, 1, 2, 3],
                                 &[
@@ -259,8 +259,8 @@ impl MainScreen {
                         );
                         dialog.run();
                         dialog.destroy();
-                        list_store.clear();
-                        list_store.insert_with_values(
+                        commits_list_store.clear();
+                        commits_list_store.insert_with_values(
                             None,
                             &[0],
                             &[&msg.to_string()]
