@@ -1,6 +1,8 @@
 #[macro_use]
 mod async_ui;
 mod screens;
+mod dag_layout;
+mod dump_git_layout;
 
 use futures::prelude::*;
 use futures::future;
@@ -12,6 +14,18 @@ use gtk::prelude::*;
 fn main() -> Result<(), String> {
     use std::rc::Rc;
     use std::cell::Cell;
+
+    {
+        let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+        if let Some(cmd) = args.get(0) {
+            if cmd == "dump-git-layout" {
+                let path = args.get(1).unwrap();
+                dump_git_layout::dump_git_layout(&path);
+
+                return Ok(());
+            }
+        }
+    }
 
     gtk::init().map_err(|_| "Failed to initialize Gtk+".to_string())?;
 
