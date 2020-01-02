@@ -20,7 +20,7 @@ macro_rules! capture {
                 capture_single_var!(
                     $name $(= $init)*
                 );
-            )+;
+            )+
             $closure
         }
     };
