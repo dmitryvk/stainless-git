@@ -157,7 +157,7 @@ impl MainScreen {
                 commits_list_store,
                 commits_tree_view,
                 commit_info_view,
-                diff_items_list_store: diff_items_list_store,
+                diff_items_list_store,
             },
         };
 
@@ -415,7 +415,7 @@ impl MainScreen {
                     main_screen.ui.commits_list_store.insert_with_values(
                         None,
                         &[0],
-                        &[&msg.to_string()]
+                        &[&msg]
                     );
                 }
             }

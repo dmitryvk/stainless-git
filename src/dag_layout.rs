@@ -22,7 +22,7 @@ pub struct LayoutRow<TNode: Node> {
 }
 
 pub fn layout_nodes<TNode: Node>(nodes: &[TNode]) -> Vec<LayoutRow<TNode>> {
-    if nodes.len() == 0 {
+    if nodes.is_empty() {
         return Vec::new();
     }
 
@@ -76,9 +76,9 @@ pub fn layout_nodes<TNode: Node>(nodes: &[TNode]) -> Vec<LayoutRow<TNode>> {
         prev_row.bot_links = top_links.clone();
 
         LayoutRow {
-            cells: cells,
+            cells,
             active_cell: CellId(*cell_pos.get(&next_node.id()).expect("cell_pos contains all cells from row") as u32),
-            top_links: top_links,
+            top_links,
             bot_links: Vec::new(),
         }
     }
